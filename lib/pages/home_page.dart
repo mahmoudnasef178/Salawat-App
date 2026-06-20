@@ -125,38 +125,40 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   const SizedBox(height: 40),
 
                   // Animated mosque icon
-                  AnimatedBuilder(
-                    animation: _pulseAnim,
-                    builder: (context, child) {
-                      return Transform.scale(
-                        scale: isRunning ? _pulseAnim.value : 1.0,
-                        child: child,
-                      );
-                    },
-                    child: Container(
-                      width: 130,
-                      height: 130,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          colors: isRunning
-                              ? [const Color(0xFF4CAF50), const Color(0xFF1B5E20)]
-                              : [const Color(0xFFA5D6A7), const Color(0xFF66BB6A)],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: isRunning
-                                ? const Color(0xFF4CAF50).withValues(alpha: 0.5)
-                                : Colors.black.withValues(alpha: 0.1),
-                            blurRadius: isRunning ? 30 : 10,
-                            spreadRadius: isRunning ? 5 : 0,
+                  RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _pulseAnim,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: isRunning ? _pulseAnim.value : 1.0,
+                          child: child,
+                        );
+                      },
+                      child: Container(
+                        width: 130,
+                        height: 130,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: isRunning
+                                ? [const Color(0xFF4CAF50), const Color(0xFF1B5E20)]
+                                : [const Color(0xFFA5D6A7), const Color(0xFF66BB6A)],
                           ),
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.mosque_rounded,
-                        size: 65,
-                        color: isRunning ? const Color(0xFFFFD54F) : Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: isRunning
+                                  ? const Color(0xFF4CAF50).withValues(alpha: 0.5)
+                                  : Colors.black.withValues(alpha: 0.1),
+                              blurRadius: isRunning ? 30 : 10,
+                              spreadRadius: isRunning ? 5 : 0,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.mosque_rounded,
+                          size: 65,
+                          color: isRunning ? const Color(0xFFFFD54F) : Colors.white,
+                        ),
                       ),
                     ),
                   ),

@@ -15,6 +15,9 @@ class AzkarPage extends StatefulWidget {
 }
 
 class _AzkarPageState extends State<AzkarPage> {
+  // Cache parsed JSON structure across navigations (never changes at runtime)
+  static Map<String, List<Map<String, dynamic>>>? _categoriesCache;
+
   Map<String, List<Map<String, dynamic>>> _categories = {};
   Map<String, int> _completedCounts = {};
   bool _loading = true;
@@ -59,38 +62,52 @@ class _AzkarPageState extends State<AzkarPage> {
 
   Future<void> _loadData() async {
     try {
-      final String data = await rootBundle.loadString('assets/azkar.json');
-      final List<dynamic> jsonList = jsonDecode(data);
-      final prefs = await SharedPreferences.getInstance();
+      // Parse JSON only once and cache it — azkar.json never changes at runtime
+      if (_categoriesCache == null) {
+        final String data = await rootBundle.loadString('assets/azkar.json');
+        final List<dynamic> jsonList = jsonDecode(data);
+        final Map<String, List<Map<String, dynamic>>> tempCategories = {};
 
-      final Map<String, List<Map<String, dynamic>>> tempCategories = {};
+        for (var item in jsonList) {
+          final category = item['category']?.toString() ?? 'أخرى';
+          final mapItem = Map<String, dynamic>.from(item);
+          mapItem['count'] = ArabicUtils.parseCount(mapItem['count']);
+          tempCategories.putIfAbsent(category, () => []).add(mapItem);
+        }
+        _categoriesCache = tempCategories;
+      }
+
+      await _refreshCompletedCounts();
+    } catch (e) {
+      debugPrint('Error loading azkar data: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  /// Only re-reads SharedPreferences counts — fast, safe to call on every navigate-back
+  Future<void> _refreshCompletedCounts() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final categories = _categoriesCache!;
       final Map<String, int> tempCompleted = {};
 
-      for (var item in jsonList) {
-        final category = item['category']?.toString() ?? 'أخرى';
-        final mapItem = Map<String, dynamic>.from(item);
-
-        mapItem['count'] = ArabicUtils.parseCount(mapItem['count']);
-
-        tempCategories.putIfAbsent(category, () => []).add(mapItem);
-
-        final id = mapItem['id'].toString();
-        final remaining =
-            prefs.getInt('azkar_remaining_$id') ?? mapItem['count'] as int;
-
-        if (remaining == 0) {
-          tempCompleted[category] = (tempCompleted[category] ?? 0) + 1;
+      for (final entry in categories.entries) {
+        for (final item in entry.value) {
+          final id = item['id'].toString();
+          final remaining = prefs.getInt('azkar_remaining_$id') ?? item['count'] as int;
+          if (remaining == 0) {
+            tempCompleted[entry.key] = (tempCompleted[entry.key] ?? 0) + 1;
+          }
         }
       }
 
       setState(() {
-        _categories = tempCategories;
+        _categories = categories;
         _completedCounts = tempCompleted;
         _loading = false;
       });
     } catch (e) {
-      debugPrint('Error loading azkar data: $e');
-      setState(() => _loading = false);
+      debugPrint('Error refreshing azkar counts: $e');
     }
   }
 
@@ -496,7 +513,7 @@ class _AzkarPageState extends State<AzkarPage> {
       ),
     );
 
-    // تحديث إحصائيات الداشبورد عند العودة
-    _loadData();
+    // Only refresh the completion counts (fast) — no need to re-read JSON
+    _refreshCompletedCounts();
   }
 }

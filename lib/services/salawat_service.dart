@@ -19,6 +19,7 @@ void onStart(ServiceInstance service) async {
 
   bool salawatEnabled = false;
   bool prayerEnabled = false;
+  bool azanEnabled = true;
   int intervalMinutes = 5;
 
   // Load initial settings
@@ -26,6 +27,7 @@ void onStart(ServiceInstance service) async {
     final prefs = await SharedPreferences.getInstance();
     salawatEnabled = prefs.getBool('running') ?? false;
     prayerEnabled = prefs.getBool('prayer_notification_enabled') ?? false;
+    azanEnabled = prefs.getBool('azan_sound_enabled') ?? true;
     intervalMinutes = prefs.getInt('interval') ?? 5;
   } catch (e) {
     debugPrint("Failed to load initial settings in background: $e");
@@ -170,6 +172,9 @@ void onStart(ServiceInstance service) async {
       if (data['prayer_enabled'] != null) {
         prayerEnabled = data['prayer_enabled'] as bool;
       }
+      if (data['azan_enabled'] != null) {
+        azanEnabled = data['azan_enabled'] as bool;
+      }
       // Note: interval is handled by prefs.reload() in the periodic timer, not here
       updateNotification();
     }
@@ -193,12 +198,18 @@ void onStart(ServiceInstance service) async {
       await prefs.reload();
       prayerEnabled = prefs.getBool('prayer_notification_enabled') ?? false;
       salawatEnabled = prefs.getBool('running') ?? false;
+      azanEnabled = prefs.getBool('azan_sound_enabled') ?? true;
     } catch (_) {}
     await updateNotification();
   });
 
   // Audio reminder check loop
   final player = AudioPlayer();
+  bool isAzaanPlaying = false;
+  player.onPlayerComplete.listen((event) {
+    isAzaanPlaying = false;
+  });
+
   // Start so that first play fires after one full interval, not immediately
   DateTime lastPlayTime = DateTime.now();
   // Track last known interval to detect changes from UI
@@ -209,6 +220,7 @@ void onStart(ServiceInstance service) async {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
       salawatEnabled = prefs.getBool('running') ?? false;
+      azanEnabled = prefs.getBool('azan_sound_enabled') ?? true;
       final newInterval = prefs.getInt('interval') ?? 5;
 
       // Only reset countdown when interval changes — don't touch lastPlayTime from updateSettings
@@ -218,9 +230,48 @@ void onStart(ServiceInstance service) async {
         // Give the user the new interval from NOW (don't play immediately)
         lastPlayTime = DateTime.now();
       }
+
+      // Check if it is a prayer time to play Azan
+      if (azanEnabled) {
+        final timingsJson = prefs.getString('prayer_timings');
+        if (timingsJson != null) {
+          final Map<String, dynamic> timings = jsonDecode(timingsJson);
+          const List<String> prayerKeys = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+          final now = DateTime.now();
+
+          for (final key in prayerKeys) {
+            final rawTime = timings[key];
+            if (rawTime != null) {
+              final parts = rawTime.split(':');
+              if (parts.length >= 2) {
+                final hr = int.tryParse(parts[0]);
+                final mn = int.tryParse(parts[1]);
+                if (hr != null && mn != null) {
+                  if (now.hour == hr && now.minute == mn) {
+                    final todayPrayerId = "${now.year}-${now.month}-${now.day}_$key";
+                    final lastPlayed = prefs.getString('last_played_prayer') ?? '';
+                    if (lastPlayed != todayPrayerId) {
+                      try {
+                        isAzaanPlaying = true;
+                        // Stop any current sound (like Salawat) and play Azan
+                        await player.stop();
+                        await player.play(AssetSource('azaan.mp3'));
+                        await prefs.setString('last_played_prayer', todayPrayerId);
+                      } catch (e) {
+                        isAzaanPlaying = false;
+                        debugPrint('Error playing Azan in background: $e');
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     } catch (_) {}
 
-    if (salawatEnabled) {
+    if (salawatEnabled && !isAzaanPlaying) {
       final now = DateTime.now();
       final elapsed = now.difference(lastPlayTime).inSeconds;
       final thresholdSeconds = intervalMinutes * 60;
@@ -277,11 +328,12 @@ Future<void> updateServiceState() async {
   final prefs = await SharedPreferences.getInstance();
   final bool salawatEnabled = prefs.getBool('running') ?? false;
   final bool prayerEnabled = prefs.getBool('prayer_notification_enabled') ?? false;
+  final bool azanEnabled = prefs.getBool('azan_sound_enabled') ?? true;
 
   final service = FlutterBackgroundService();
   final isRunning = await service.isRunning();
 
-  if (salawatEnabled || prayerEnabled) {
+  if (salawatEnabled || prayerEnabled || azanEnabled) {
     if (!isRunning) {
       await initializeService();
       await service.startService();
@@ -291,6 +343,7 @@ Future<void> updateServiceState() async {
     service.invoke('updateSettings', {
       'salawat_enabled': salawatEnabled,
       'prayer_enabled': prayerEnabled,
+      'azan_enabled': azanEnabled,
       'interval': selectedMinutes,
     });
   } else {

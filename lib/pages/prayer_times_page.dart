@@ -49,13 +49,14 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
   };
 
   bool _prayerNotificationEnabled = false;
+  bool _azanSoundEnabled = true;
 
   @override
   void initState() {
     super.initState();
     _loadNotificationSetting();
     _loadPrayerTimes();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
   }
@@ -65,6 +66,7 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       final prefs = await SharedPreferences.getInstance();
       setState(() {
         _prayerNotificationEnabled = prefs.getBool('prayer_notification_enabled') ?? false;
+        _azanSoundEnabled = prefs.getBool('azan_sound_enabled') ?? true;
       });
     } catch (e) {
       debugPrint('Error loading notification setting: $e');
@@ -89,6 +91,19 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       await updateServiceState();
     } catch (e) {
       debugPrint('Error toggling prayer notification: $e');
+    }
+  }
+
+  void _toggleAzanSound(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _azanSoundEnabled = value;
+      });
+      await prefs.setBool('azan_sound_enabled', value);
+      await updateServiceState();
+    } catch (e) {
+      debugPrint('Error toggling Azan sound: $e');
     }
   }
 
@@ -208,15 +223,6 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       int.parse(parts[1]),
     );
   }
-
-  Duration _durationUntil(String key) {
-    var t = _prayerDateTime(key);
-    if (t == null) return Duration.zero;
-    if (_now.isAfter(t)) t = t.add(const Duration(days: 1));
-    return t.difference(_now);
-  }
-
-  String _fmtCountdown(Duration d) => ArabicUtils.fmtCountdown(d);
 
   /// تحويل "HH:mm" (24 ساعة) إلى "H:mm ص/م"
   String _fmt12(String raw) => ArabicUtils.fmt12Hour(raw);
@@ -400,7 +406,79 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
             _buildCountdownCard(next),
             const SizedBox(height: 12),
             _buildNotificationToggleCard(),
+            const SizedBox(height: 12),
+            _buildAzanSoundToggleCard(),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAzanSoundToggleCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        textDirection: TextDirection.rtl,
+        children: [
+          Expanded(
+            child: Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD54F).withOpacity(0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.volume_up_rounded,
+                    color: Color(0xFFFFD54F),
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Text(
+                        'تشغيل صوت الأذان',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'تنبيه بالصوت عند دخول وقت الصلاة',
+                        style: TextStyle(
+                          color: Colors.white60,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _azanSoundEnabled,
+            activeColor: const Color(0xFFFFD54F),
+            activeTrackColor: const Color(0xFFFFD54F).withOpacity(0.4),
+            inactiveThumbColor: Colors.white54,
+            inactiveTrackColor: Colors.white12,
+            onChanged: _toggleAzanSound,
+          ),
         ],
       ),
     );
@@ -477,8 +555,6 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
   }
 
   Widget _buildCountdownCard(String next) {
-    final dur = _durationUntil(next);
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
@@ -488,11 +564,11 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Colors.white.withOpacity(0.12),
-            Colors.white.withOpacity(0.05),
+            Colors.white.withValues(alpha: 0.12),
+            Colors.white.withValues(alpha: 0.05),
           ],
         ),
-        border: Border.all(color: Colors.white.withOpacity(0.15)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
       ),
       child: Column(
         children: [
@@ -515,25 +591,10 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
             style: const TextStyle(color: Colors.white70, fontSize: 15),
           ),
           const SizedBox(height: 14),
-          // Countdown
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFD54F).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: const Color(0xFFFFD54F).withOpacity(0.3)),
-            ),
-            child: Text(
-              _fmtCountdown(dur),
-              style: const TextStyle(
-                color: Color(0xFFFFD54F),
-                fontSize: 36,
-                fontWeight: FontWeight.w300,
-                letterSpacing: 6,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
+          // Only this widget re-renders every second — the rest of the page stays still
+          _PrayerCountdown(
+            nextKey: next,
+            timings: _timings!,
           ),
           const SizedBox(height: 8),
           const Text(
@@ -635,6 +696,82 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Isolated countdown widget — has its own 1-second timer so the parent
+// page doesn't need to rebuild every second (only this widget does). ────────
+class _PrayerCountdown extends StatefulWidget {
+  final String nextKey;
+  final Map<String, String> timings;
+
+  const _PrayerCountdown({required this.nextKey, required this.timings});
+
+  @override
+  State<_PrayerCountdown> createState() => _PrayerCountdownState();
+}
+
+class _PrayerCountdownState extends State<_PrayerCountdown> {
+  late Timer _timer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  Duration get _remaining {
+    final raw = widget.timings[widget.nextKey];
+    if (raw == null) return Duration.zero;
+    final parts = raw.split(':');
+    if (parts.length < 2) return Duration.zero;
+    var t = DateTime(
+      _now.year, _now.month, _now.day,
+      int.parse(parts[0]), int.parse(parts[1]),
+    );
+    if (_now.isAfter(t)) t = t.add(const Duration(days: 1));
+    return t.difference(_now);
+  }
+
+  String _fmt(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    final s = d.inSeconds % 60;
+    String pad(int n) => n.toString().padLeft(2, '0');
+    return h > 0 ? '$h:${pad(m)}:${pad(s)}' : '${pad(m)}:${pad(s)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFD54F).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFFFD54F).withValues(alpha: 0.3)),
+        ),
+        child: Text(
+          _fmt(_remaining),
+          style: const TextStyle(
+            color: Color(0xFFFFD54F),
+            fontSize: 36,
+            fontWeight: FontWeight.w300,
+            letterSpacing: 6,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
       ),
     );
   }
