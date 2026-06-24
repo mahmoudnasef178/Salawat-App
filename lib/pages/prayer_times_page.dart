@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../core/utils/arabic_utils.dart';
 import '../services/salawat_service.dart';
 
 class PrayerTimesPage extends StatefulWidget {
-  const PrayerTimesPage({super.key});
+  final bool isActive;
+  const PrayerTimesPage({super.key, this.isActive = true});
 
   @override
   State<PrayerTimesPage> createState() => _PrayerTimesPageState();
@@ -50,15 +52,51 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
 
   bool _prayerNotificationEnabled = false;
   bool _azanSoundEnabled = true;
+  String _selectedAzanFile = 'azan_makkah.mp3';
+  AudioPlayer? _previewPlayer;
+  String? _previewingFile;
 
   @override
   void initState() {
     super.initState();
+    _previewPlayer = AudioPlayer();
+    _previewPlayer?.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _previewingFile = null;
+        });
+      }
+    });
     _loadNotificationSetting();
     _loadPrayerTimes();
+    if (widget.isActive) {
+      _startTicker();
+    }
+  }
+
+  void _startTicker() {
+    _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
+  }
+
+  void _stopTicker() {
+    _ticker?.cancel();
+    _ticker = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant PrayerTimesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive != oldWidget.isActive) {
+      if (widget.isActive) {
+        setState(() => _now = DateTime.now());
+        _startTicker();
+      } else {
+        _stopTicker();
+      }
+    }
   }
 
   Future<void> _loadNotificationSetting() async {
@@ -67,6 +105,7 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       setState(() {
         _prayerNotificationEnabled = prefs.getBool('prayer_notification_enabled') ?? false;
         _azanSoundEnabled = prefs.getBool('azan_sound_enabled') ?? true;
+        _selectedAzanFile = prefs.getString('selected_azan_file') ?? 'azan_makkah.mp3';
       });
     } catch (e) {
       debugPrint('Error loading notification setting: $e');
@@ -90,7 +129,7 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       
       await updateServiceState();
     } catch (e) {
-      debugPrint('Error toggling prayer notification: $e');
+      debugPrint('Error togging prayer notification: $e');
     }
   }
 
@@ -99,6 +138,10 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       final prefs = await SharedPreferences.getInstance();
       setState(() {
         _azanSoundEnabled = value;
+        if (!value && _previewingFile != null) {
+          _previewPlayer?.stop();
+          _previewingFile = null;
+        }
       });
       await prefs.setBool('azan_sound_enabled', value);
       await updateServiceState();
@@ -107,49 +150,118 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
     }
   }
 
+  void _selectAzanFile(String file) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _selectedAzanFile = file;
+      });
+      await prefs.setString('selected_azan_file', file);
+      await updateServiceState();
+    } catch (e) {
+      debugPrint('Error selecting Azan file: $e');
+    }
+  }
+
+  void _togglePreview(String file) async {
+    try {
+      if (_previewingFile == file) {
+        await _previewPlayer?.stop();
+        setState(() {
+          _previewingFile = null;
+        });
+      } else {
+        await _previewPlayer?.stop();
+        setState(() {
+          _previewingFile = file;
+        });
+        await _previewPlayer?.play(AssetSource(file));
+      }
+    } catch (e) {
+      debugPrint('Error playing preview: $e');
+    }
+  }
+
   @override
   void dispose() {
-    _ticker?.cancel();
+    _stopTicker();
+    _previewPlayer?.dispose();
     super.dispose();
   }
 
-  Future<void> _loadPrayerTimes() async {
+  Future<void> _loadPrayerTimes({bool forceRefreshLocation = false}) async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      // 1. Check & request location permission
-      LocationPermission perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      if (perm == LocationPermission.denied ||
-          perm == LocationPermission.deniedForever) {
-        setState(() {
-          _error = perm == LocationPermission.deniedForever
-              ? 'تم رفض إذن الموقع بشكل دائم.\nيرجى تفعيله من إعدادات التطبيق.'
-              : 'يحتاج التطبيق إذن الوصول للموقع\nلتحديد مواقيت الصلاة.';
-          _loading = false;
-        });
-        return;
+      final prefs = await SharedPreferences.getInstance();
+      final nowObj = DateTime.now();
+      final todayStr = "${nowObj.year}-${nowObj.month.toString().padLeft(2, '0')}-${nowObj.day.toString().padLeft(2, '0')}";
+
+      // 1. Try to load cached timings for today
+      if (!forceRefreshLocation) {
+        final cachedDate = prefs.getString('prayer_timings_date');
+        final cachedTimingsJson = prefs.getString('prayer_timings');
+        final cachedDateInfoJson = prefs.getString('prayer_date_info');
+        final cachedLocation = prefs.getString('prayer_location_name');
+
+        if (cachedDate == todayStr &&
+            cachedTimingsJson != null &&
+            cachedDateInfoJson != null &&
+            cachedLocation != null) {
+          setState(() {
+            _timings = Map<String, String>.from(jsonDecode(cachedTimingsJson));
+            _dateInfo = jsonDecode(cachedDateInfoJson) as Map<String, dynamic>;
+            _locationName = cachedLocation;
+            _loading = false;
+          });
+          return;
+        }
       }
 
-      // 2. Get position
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
+      double? lat = forceRefreshLocation ? null : prefs.getDouble('prayer_latitude');
+      double? lng = forceRefreshLocation ? null : prefs.getDouble('prayer_longitude');
 
-      // 3. Fetch prayer times (method 5 = Egyptian General Authority)
-      final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      // 2. If coordinates are missing, request location permission & GPS
+      if (lat == null || lng == null) {
+        // Check & request location permission
+        LocationPermission perm = await Geolocator.checkPermission();
+        if (perm == LocationPermission.denied) {
+          perm = await Geolocator.requestPermission();
+        }
+        if (perm == LocationPermission.denied ||
+            perm == LocationPermission.deniedForever) {
+          setState(() {
+            _error = perm == LocationPermission.deniedForever
+                ? 'تم رفض إذن الموقع بشكل دائم.\nيرجى تفعيله من إعدادات التطبيق.'
+                : 'يحتاج التطبيق إذن الوصول للموقع\nلتحديد مواقيت الصلاة.';
+            _loading = false;
+          });
+          return;
+        }
+
+        // Get position
+        final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 15),
+          ),
+        );
+        lat = pos.latitude;
+        lng = pos.longitude;
+
+        await prefs.setDouble('prayer_latitude', lat);
+        await prefs.setDouble('prayer_longitude', lng);
+      }
+
+      // 3. Fetch from API
+      final ts = nowObj.millisecondsSinceEpoch ~/ 1000;
       final url =
           'https://api.aladhan.com/v1/timings/$ts'
-          '?latitude=${pos.latitude.toStringAsFixed(4)}'
-          '&longitude=${pos.longitude.toStringAsFixed(4)}'
+          '?latitude=${lat.toStringAsFixed(4)}'
+          '&longitude=${lng.toStringAsFixed(4)}'
           '&method=5';
 
       final res =
@@ -160,25 +272,20 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
         final timings =
             Map<String, String>.from(body['data']['timings'] as Map);
         final meta = body['data']['meta'] as Map<String, dynamic>;
+        final dateInfo = body['data']['date'] as Map<String, dynamic>;
+        final locationName = '${meta['timezone'] ?? ''}'.replaceAll('_', ' ');
 
-        try {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setDouble('prayer_latitude', pos.latitude);
-          await prefs.setDouble('prayer_longitude', pos.longitude);
-          await prefs.setString('prayer_timings', jsonEncode(timings));
-          final nowObj = DateTime.now();
-          final todayStr = "${nowObj.year}-${nowObj.month.toString().padLeft(2, '0')}-${nowObj.day.toString().padLeft(2, '0')}";
-          await prefs.setString('prayer_timings_date', todayStr);
-          await updateServiceState();
-        } catch (e) {
-          debugPrint('Error caching prayer times: $e');
-        }
+        // Cache all data
+        await prefs.setString('prayer_timings', jsonEncode(timings));
+        await prefs.setString('prayer_timings_date', todayStr);
+        await prefs.setString('prayer_date_info', jsonEncode(dateInfo));
+        await prefs.setString('prayer_location_name', locationName);
+        await updateServiceState();
 
         setState(() {
           _timings = timings;
-          _dateInfo = body['data']['date'] as Map<String, dynamic>;
-          _locationName =
-              '${meta['timezone'] ?? ''}'.replaceAll('_', ' ');
+          _dateInfo = dateInfo;
+          _locationName = locationName;
           _loading = false;
         });
       } else {
@@ -385,6 +492,25 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
                   style:
                       const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: 'تحديث الموقع ومواقيت الصلاة',
+                  child: GestureDetector(
+                    onTap: () => _loadPrayerTimes(forceRefreshLocation: true),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.06),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.my_location_rounded,
+                        color: Color(0xFFFFD54F),
+                        size: 11,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           const SizedBox(height: 4),
@@ -408,6 +534,8 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
             _buildNotificationToggleCard(),
             const SizedBox(height: 12),
             _buildAzanSoundToggleCard(),
+            const SizedBox(height: 12),
+            _buildAzanSoundSelectorCard(),
           ],
         ],
       ),
@@ -595,6 +723,7 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
           _PrayerCountdown(
             nextKey: next,
             timings: _timings!,
+            isActive: widget.isActive,
           ),
           const SizedBox(height: 8),
           const Text(
@@ -699,6 +828,145 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
       ),
     );
   }
+
+  Widget _buildAzanSoundSelectorCard() {
+    if (!_azanSoundEnabled) return const SizedBox.shrink();
+
+    final List<Map<String, String>> azanOptions = [
+      {
+        'file': 'azan_makkah.mp3',
+        'name': 'الأذان المكي',
+        'desc': 'بصوت مؤذن الحرم المكي الشريف',
+      },
+      {
+        'file': 'azan_qatami.mp3',
+        'name': 'أذان الشيخ ناصر القطامي',
+        'desc': 'بصوت الشيخ ناصر القطامي',
+      },
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        textDirection: TextDirection.rtl,
+        children: [
+          const Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                Icons.music_note_rounded,
+                color: Color(0xFFFFD54F),
+                size: 20,
+              ),
+              SizedBox(width: 8),
+              Text(
+                'صوت مؤذن الأذان',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...azanOptions.map((option) {
+            final isSelected = _selectedAzanFile == option['file'];
+            final isPreviewing = _previewingFile == option['file'];
+            return GestureDetector(
+              onTap: () => _selectAzanFile(option['file']!),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? const Color(0xFFFFD54F).withValues(alpha: 0.15)
+                      : Colors.white.withValues(alpha: 0.03),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isSelected
+                        ? const Color(0xFFFFD54F).withValues(alpha: 0.5)
+                        : Colors.white.withValues(alpha: 0.05),
+                  ),
+                ),
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    // Radio indicator
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? const Color(0xFFFFD54F) : Colors.white30,
+                          width: 2,
+                        ),
+                      ),
+                      child: isSelected
+                          ? Center(
+                              child: Container(
+                                width: 10,
+                                height: 10,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Color(0xFFFFD54F),
+                                ),
+                              ),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    // Text
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Text(
+                            option['name']!,
+                            style: TextStyle(
+                              color: isSelected ? const Color(0xFFFFD54F) : Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            option['desc']!,
+                            style: const TextStyle(
+                              color: Colors.white60,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Preview button
+                    IconButton(
+                      icon: Icon(
+                        isPreviewing ? Icons.stop_circle_rounded : Icons.play_circle_fill_rounded,
+                        color: const Color(0xFFFFD54F),
+                        size: 26,
+                      ),
+                      onPressed: () => _togglePreview(option['file']!),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
 }
 
 // ─── Isolated countdown widget — has its own 1-second timer so the parent
@@ -706,28 +974,58 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
 class _PrayerCountdown extends StatefulWidget {
   final String nextKey;
   final Map<String, String> timings;
+  final bool isActive;
 
-  const _PrayerCountdown({required this.nextKey, required this.timings});
+  const _PrayerCountdown({
+    required this.nextKey,
+    required this.timings,
+    required this.isActive,
+  });
 
   @override
   State<_PrayerCountdown> createState() => _PrayerCountdownState();
 }
 
 class _PrayerCountdownState extends State<_PrayerCountdown> {
-  late Timer _timer;
+  Timer? _timer;
   DateTime _now = DateTime.now();
 
   @override
   void initState() {
     super.initState();
+    if (widget.isActive) {
+      _startTimer();
+    }
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
   }
 
+  void _stopTimer() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PrayerCountdown oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive != oldWidget.isActive) {
+      if (widget.isActive) {
+        setState(() => _now = DateTime.now());
+        _startTimer();
+      } else {
+        _stopTimer();
+      }
+    }
+  }
+
   @override
   void dispose() {
-    _timer.cancel();
+    _stopTimer();
     super.dispose();
   }
 

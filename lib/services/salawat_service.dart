@@ -21,6 +21,7 @@ void onStart(ServiceInstance service) async {
   bool prayerEnabled = false;
   bool azanEnabled = true;
   int intervalMinutes = 5;
+  String selectedAzanFile = 'azan_makkah.mp3';
 
   // Load initial settings
   try {
@@ -29,6 +30,7 @@ void onStart(ServiceInstance service) async {
     prayerEnabled = prefs.getBool('prayer_notification_enabled') ?? false;
     azanEnabled = prefs.getBool('azan_sound_enabled') ?? true;
     intervalMinutes = prefs.getInt('interval') ?? 5;
+    selectedAzanFile = prefs.getString('selected_azan_file') ?? 'azan_makkah.mp3';
   } catch (e) {
     debugPrint("Failed to load initial settings in background: $e");
   }
@@ -75,8 +77,10 @@ void onStart(ServiceInstance service) async {
             if (res.statusCode == 200) {
               final body = jsonDecode(res.body);
               final newTimings = Map<String, dynamic>.from(body['data']['timings'] as Map);
+              final dateInfo = body['data']['date'] as Map<String, dynamic>;
               await prefs.setString('prayer_timings', jsonEncode(newTimings));
               await prefs.setString('prayer_timings_date', todayStr);
+              await prefs.setString('prayer_date_info', jsonEncode(dateInfo));
               timings = newTimings;
             }
           } catch (e) {
@@ -175,6 +179,9 @@ void onStart(ServiceInstance service) async {
       if (data['azan_enabled'] != null) {
         azanEnabled = data['azan_enabled'] as bool;
       }
+      if (data['selected_azan_file'] != null) {
+        selectedAzanFile = data['selected_azan_file'] as String;
+      }
       // Note: interval is handled by prefs.reload() in the periodic timer, not here
       updateNotification();
     }
@@ -221,6 +228,7 @@ void onStart(ServiceInstance service) async {
       await prefs.reload();
       salawatEnabled = prefs.getBool('running') ?? false;
       azanEnabled = prefs.getBool('azan_sound_enabled') ?? true;
+      selectedAzanFile = prefs.getString('selected_azan_file') ?? 'azan_makkah.mp3';
       final newInterval = prefs.getInt('interval') ?? 5;
 
       // Only reset countdown when interval changes — don't touch lastPlayTime from updateSettings
@@ -255,7 +263,7 @@ void onStart(ServiceInstance service) async {
                         isAzaanPlaying = true;
                         // Stop any current sound (like Salawat) and play Azan
                         await player.stop();
-                        await player.play(AssetSource('azaan.mp3'));
+                        await player.play(AssetSource(selectedAzanFile));
                         await prefs.setString('last_played_prayer', todayPrayerId);
                       } catch (e) {
                         isAzaanPlaying = false;
@@ -340,11 +348,13 @@ Future<void> updateServiceState() async {
     }
     // Update variables inside running service Isolate
     final selectedMinutes = prefs.getInt('interval') ?? 5;
+    final selectedAzanFile = prefs.getString('selected_azan_file') ?? 'azan_makkah.mp3';
     service.invoke('updateSettings', {
       'salawat_enabled': salawatEnabled,
       'prayer_enabled': prayerEnabled,
       'azan_enabled': azanEnabled,
       'interval': selectedMinutes,
+      'selected_azan_file': selectedAzanFile,
     });
   } else {
     if (isRunning) {

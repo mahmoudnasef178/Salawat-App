@@ -6,7 +6,8 @@ import '../services/salawat_service.dart';
 
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final bool isActive;
+  const HomePage({super.key, this.isActive = true});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -29,11 +30,27 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
+    );
+
+    if (widget.isActive) {
+      _pulseController.repeat(reverse: true);
+    }
 
     _pulseAnim = Tween<double>(begin: 1.0, end: 1.12).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive != oldWidget.isActive) {
+      if (widget.isActive) {
+        _pulseController.repeat(reverse: true);
+      } else {
+        _pulseController.stop();
+      }
+    }
   }
 
   @override

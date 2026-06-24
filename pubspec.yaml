@@ -24,7 +24,8 @@ flutter:
   assets:
     - assets/salawat.mp3
     - assets/azkar.json
-    - assets/azaan.mp3
+    - assets/azan_makkah.mp3
+    - assets/azan_qatami.mp3
 flutter_launcher_icons:
   android: true
   ios: false

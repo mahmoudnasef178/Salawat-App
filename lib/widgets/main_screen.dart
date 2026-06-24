@@ -16,19 +16,17 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  static const List<Widget> _pages = [
-    HomePage(),
-    AzkarPage(),
-    QuranPage(),
-    PrayerTimesPage(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: _pages,
+        children: [
+          HomePage(isActive: _currentIndex == 0),
+          const AzkarPage(),
+          const QuranPage(),
+          PrayerTimesPage(isActive: _currentIndex == 3),
+        ],
       ),
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
