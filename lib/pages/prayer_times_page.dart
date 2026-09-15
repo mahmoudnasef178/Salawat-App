@@ -60,6 +60,26 @@ class _PrayerTimesPageState extends State<PrayerTimesPage> {
   void initState() {
     super.initState();
     _previewPlayer = AudioPlayer();
+    try {
+      _previewPlayer?.setAudioContext(AudioContext(
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playback,
+          options: const {
+            AVAudioSessionOptions.defaultToSpeaker,
+            AVAudioSessionOptions.mixWithOthers,
+          },
+        ),
+        android: AudioContextAndroid(
+          isSpeakerphoneOn: true,
+          stayAwake: true,
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.alarm,
+          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+        ),
+      ));
+    } catch (e) {
+      debugPrint("Failed to set preview audio context: $e");
+    }
     _previewPlayer?.onPlayerComplete.listen((_) {
       if (mounted) {
         setState(() {
